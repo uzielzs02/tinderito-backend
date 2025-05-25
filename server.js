@@ -1,13 +1,16 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const { Pool } = require('pg'); // Cambiamos mysql2 por pg
+require('dotenv').config(); // Asegúrate de tener esto al inicio de tu archivo
 const bcrypt = require('bcrypt');
 const app = express();
 
 // Configuración de PostgreSQL (usa variables de entorno en producción)
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:1234@localhost:5432/tinderito',
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false // Necesario para Render PostgreSQL
+  }
 });
 
 // Verificación de conexión
