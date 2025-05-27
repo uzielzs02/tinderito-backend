@@ -58,7 +58,16 @@ app.use((req, res, next) => {
 // GET /prueba
 app.get('/prueba', (req, res) => {
   const username = req.query.username;
-  const query = 'SELECT id, nombre, email, descripcion, preferencia_genero FROM usuarios WHERE username = $1';
+  const query = `
+          SELECT 
+            id, 
+            nombre, 
+            email, 
+            COALESCE(descripcion, '') AS descripcion, 
+            COALESCE(preferencia_genero, '') AS preferencia_genero 
+          FROM usuarios 
+          WHERE username = $1
+        `;
   
   pool.query(query, [username], (err, results) => {
     if (err) {
