@@ -318,15 +318,26 @@ app.get('/candidatos', async (req, res) => {
   }
 
   try {
-    const candidatos = await pool.query(`
-      SELECT u.id, u.nombre, u.username, u.descripcion
-      FROM usuarios u
-      WHERE u.id != $1
-        AND u.id NOT IN (
-          SELECT receptor_id FROM likes WHERE emisor_id = $1
-        )
-      LIMIT 20
-    `, [userId]);
+        const candidatos = await pool.query(`
+          SELECT 
+            u.id, 
+            u.nombre, 
+            u.username, 
+            u.descripcion,
+            f.url AS foto
+          FROM usuarios u
+          LEFT JOIN (
+            SELECT DISTINCT ON (usuario_id) usuario_id, url
+            FROM fotos
+            ORDER BY usuario_id, id ASC
+          ) f ON f.usuario_id = u.id
+          WHERE u.id != $1
+            ${generoFiltro}
+            AND u.id NOT IN (
+              SELECT receptor_id FROM likes WHERE emisor_id = $1
+            )
+          LIMIT 20
+        `, [userId]);
 
     res.json({ status: 'success', candidatos: candidatos.rows });
   } catch (err) {
