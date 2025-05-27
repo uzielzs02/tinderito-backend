@@ -58,7 +58,7 @@ app.use((req, res, next) => {
 // GET /prueba
 app.get('/prueba', (req, res) => {
   const username = req.query.username;
-  const query = 'SELECT nombre, email FROM usuarios WHERE username = $1';
+  const query = 'SELECT id, nombre, email, descripcion, preferencia_genero FROM usuarios WHERE username = $1';
   
   pool.query(query, [username], (err, results) => {
     if (err) {
@@ -72,11 +72,15 @@ app.get('/prueba', (req, res) => {
 
     const user = results.rows[0];
     res.json({
+      id: user.id,
       nombreCompleto: user.nombre,
-      email: user.email
+      email: user.email,
+      descripcion: user.descripcion,
+      preferencia_genero: user.preferencia_genero
     });
   });
 });
+
 
 // POST /login
 app.post('/login', (req, res) => {
