@@ -4,6 +4,27 @@ const { Pool } = require('pg'); // Cambiamos mysql2 por pg
 require('dotenv').config(); // Asegúrate de tener esto al inicio de tu archivo
 const bcrypt = require('bcrypt');
 const app = express();
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
+// Configurar almacenamiento para fotos
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, 'uploads/'),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${ext}`;
+    cb(null, uniqueName);
+  }
+});
+const upload = multer({ storage });
+
+// Crear carpeta si no existe
+if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
+
+// Servir archivos estáticos
+app.use('/uploads', express.static('uploads'));
+
 
 // Configuración de PostgreSQL (usa variables de entorno en producción)
 const pool = new Pool({
@@ -72,16 +93,18 @@ app.post('/login', (req, res) => {
     const user = results.rows[0];
     bcrypt.compare(password, user.password, (err, isMatch) => {
       if (isMatch) {
-        res.json({
-          status: 'success',
-          message: 'Login exitoso',
-          user: {
-            id: user.id,
-            nombre: user.nombre,
-            username: user.username,
-            email: user.email
-          }
-        });
+            res.json({
+              status: 'success',
+              message: 'Login exitoso',
+              user: {
+                id: user.id,
+                nombre: user.nombre,
+                username: user.username,
+                email: user.email,
+                descripcion: user.descripcion,
+                preferencia_genero: user.preferencia_genero
+              }
+            });
       } else {
         res.json({ status: 'error', message: 'Contraseña incorrecta' });
       }
@@ -222,6 +245,268 @@ app.put('/user/:username', async (req, res) => {
     await updateUser(user);
   } catch (err) {
     console.error("Error en PUT /user:", err);
+    res.status(500).json({ status: 'error', message: 'Error en el servidor' });
+  }
+});
+app.put('/user/:username/perfil_completo', async (req, res) => {
+  const { username } = req.params;
+  const { descripcion, preferencia_genero } = req.body;
+
+  if (!descripcion || !preferencia_genero) {
+    return res.status(400).json({ status: 'error', message: 'Faltan campos requeridos' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE usuarios 
+       SET descripcion = $1, preferencia_genero = $2 
+       WHERE username = $3 
+       RETURNING id, nombre, username, email, descripcion, preferencia_genero`,
+      [descripcion, preferencia_genero, username]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Usuario no encontrado' });
+    }
+
+    return res.json({ status: 'success', message: 'Perfil completado', user: result.rows[0] });
+
+  } catch (err) {
+    console.error('Error al completar perfil:', err);
+    return res.status(500).json({ status: 'error', message: 'Error en el servidor' });
+  }
+});
+app.post('/foto', async (req, res) => {
+  const { usuario_id, url } = req.body;
+
+  if (!usuario_id || !url) {
+    return res.status(400).json({ status: 'error', message: 'Faltan campos requeridos' });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO fotos (usuario_id, url) 
+       VALUES ($1, $2) 
+       RETURNING id, url`,
+      [usuario_id, url]
+    );
+
+    res.json({ status: 'success', message: 'Foto guardada', foto: result.rows[0] });
+  } catch (err) {
+    console.error('Error al subir foto:', err);
+    res.status(500).json({ status: 'error', message: 'Error en el servidor' });
+  }
+});
+app.get('/candidatos', async (req, res) => {
+  const { userId } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({ status: 'error', message: 'Falta userId en la consulta' });
+  }
+
+  try {
+    // Obtener preferencia del usuario
+    const prefResult = await pool.query(
+      'SELECT preferencia_genero FROM usuarios WHERE id = $1',
+      [userId]
+    );
+
+    if (prefResult.rows.length === 0) {
+      return res.status(404).json({ status: 'error', message: 'Usuario no encontrado' });
+    }
+
+    const preferencia = prefResult.rows[0].preferencia_genero;
+
+    // Construir filtro
+    let generoFiltro = '';
+    if (preferencia === 'hombre') generoFiltro = "AND u.genero = 'hombre'";
+    else if (preferencia === 'mujer') generoFiltro = "AND u.genero = 'mujer'";
+    // Si es "ambos", no filtramos por género
+
+    const candidatos = await pool.query(`
+      SELECT u.id, u.nombre, u.username, u.descripcion
+      FROM usuarios u
+      WHERE u.id != $1
+        ${generoFiltro}
+        AND u.id NOT IN (
+          SELECT receptor_id FROM likes WHERE emisor_id = $1
+        )
+      LIMIT 20
+    `, [userId]);
+
+    res.json({ status: 'success', candidatos: candidatos.rows });
+  } catch (err) {
+    console.error('Error en /candidatos:', err);
+    res.status(500).json({ status: 'error', message: 'Error en el servidor' });
+  }
+});
+app.post('/like', async (req, res) => {
+  const { emisor_id, receptor_id, reaccion } = req.body;
+
+  if (!emisor_id || !receptor_id || reaccion === undefined) {
+    return res.status(400).json({ status: 'error', message: 'Faltan datos' });
+  }
+
+  try {
+    // Guardar el like/dislike
+    await pool.query(`
+      INSERT INTO likes (emisor_id, receptor_id, reaccion)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (emisor_id, receptor_id) DO UPDATE SET reaccion = EXCLUDED.reaccion
+    `, [emisor_id, receptor_id, reaccion]);
+
+    // Si fue like, verificar si el otro ya dio like
+    if (reaccion) {
+      const matchCheck = await pool.query(`
+        SELECT * FROM likes
+        WHERE emisor_id = $2 AND receptor_id = $1 AND reaccion = TRUE
+      `, [emisor_id, receptor_id]);
+
+      if (matchCheck.rows.length > 0) {
+        // Crear match si no existe aún
+        const existing = await pool.query(`
+          SELECT * FROM matches
+          WHERE (usuario1_id = $1 AND usuario2_id = $2) OR (usuario1_id = $2 AND usuario2_id = $1)
+        `, [emisor_id, receptor_id]);
+
+        if (existing.rows.length === 0) {
+          await pool.query(`
+            INSERT INTO matches (usuario1_id, usuario2_id)
+            VALUES ($1, $2)
+          `, [emisor_id, receptor_id]);
+        }
+
+        return res.json({ status: 'success', match: true });
+      }
+    }
+
+    res.json({ status: 'success', match: false });
+  } catch (err) {
+    console.error('Error en /like:', err);
+    res.status(500).json({ status: 'error', message: 'Error en el servidor' });
+  }
+});
+app.get('/matches', async (req, res) => {
+  const { userId } = req.query;
+
+  if (!userId) {
+    return res.status(400).json({ status: 'error', message: 'Falta userId' });
+  }
+
+  try {
+    const matches = await pool.query(`
+      SELECT 
+        m.id AS match_id,
+        u.id AS usuario_id,
+        u.nombre,
+        u.username,
+        u.descripcion
+      FROM matches m
+      JOIN usuarios u ON (u.id = CASE 
+        WHEN m.usuario1_id = $1 THEN m.usuario2_id 
+        ELSE m.usuario1_id END)
+      WHERE m.usuario1_id = $1 OR m.usuario2_id = $1
+    `, [userId]);
+
+    res.json({ status: 'success', matches: matches.rows });
+  } catch (err) {
+    console.error('Error en /matches:', err);
+    res.status(500).json({ status: 'error', message: 'Error en el servidor' });
+  }
+});
+
+app.post('/mensaje', async (req, res) => {
+  const { match_id, emisor_id, mensaje } = req.body;
+
+  if (!match_id || !emisor_id || !mensaje) {
+    return res.status(400).json({ status: 'error', message: 'Faltan campos' });
+  }
+
+  try {
+    const result = await pool.query(`
+      INSERT INTO mensajes (match_id, emisor_id, mensaje)
+      VALUES ($1, $2, $3)
+      RETURNING id, mensaje, fecha
+    `, [match_id, emisor_id, mensaje]);
+
+    res.json({ status: 'success', message: 'Mensaje enviado', data: result.rows[0] });
+  } catch (err) {
+    console.error('Error en /mensaje:', err);
+    res.status(500).json({ status: 'error', message: 'Error en el servidor' });
+  }
+});
+
+app.put('/user/:id/perfil_completo', async (req, res) => {
+  const userId = req.params.id;
+  const { descripcion, preferencia_genero, fotos } = req.body;
+
+  if (!descripcion || !preferencia_genero || !fotos || !Array.isArray(fotos) || fotos.length < 3) {
+    return res.status(400).json({ status: 'error', message: 'Faltan datos o fotos' });
+  }
+
+  try {
+    // Actualizar usuario
+    await pool.query(`
+      UPDATE usuarios
+      SET descripcion = $1, preferencia_genero = $2
+      WHERE id = $3
+    `, [descripcion, preferencia_genero, userId]);
+
+    // Eliminar fotos anteriores
+    await pool.query(`DELETE FROM fotos WHERE usuario_id = $1`, [userId]);
+
+    // Insertar nuevas fotos
+    for (const url of fotos) {
+      await pool.query(`
+        INSERT INTO fotos (usuario_id, url)
+        VALUES ($1, $2)
+      `, [userId, url]);
+    }
+
+    res.json({ status: 'success', message: 'Perfil completado con fotos' });
+
+  } catch (err) {
+    console.error('Error en PUT /user/:id/perfil_completo:', err);
+    res.status(500).json({ status: 'error', message: 'Error en el servidor' });
+  }
+});
+
+
+app.post('/upload_fotos', upload.fields([
+  { name: 'foto1', maxCount: 1 },
+  { name: 'foto2', maxCount: 1 },
+  { name: 'foto3', maxCount: 1 }
+]), async (req, res) => {
+  try {
+    const { userId, descripcion, preferencia_genero } = req.body;
+
+    if (!userId || !descripcion || !preferencia_genero || !req.files) {
+      return res.status(400).json({ status: 'error', message: 'Faltan campos o archivos' });
+    }
+
+    // Actualizar usuario
+    await pool.query(`
+      UPDATE usuarios 
+      SET descripcion = $1, preferencia_genero = $2 
+      WHERE id = $3
+    `, [descripcion, preferencia_genero, userId]);
+
+    // Guardar rutas de imágenes
+    const fotos = ['foto1', 'foto2', 'foto3'];
+    for (const campo of fotos) {
+      const archivo = req.files[campo]?.[0];
+      if (archivo) {
+        const url = `/uploads/${archivo.filename}`;
+        await pool.query(`
+          INSERT INTO fotos (usuario_id, url)
+          VALUES ($1, $2)
+        `, [userId, url]);
+      }
+    }
+
+    res.json({ status: 'success', message: 'Perfil y fotos guardados correctamente' });
+  } catch (err) {
+    console.error('Error en /upload_fotos:', err);
     res.status(500).json({ status: 'error', message: 'Error en el servidor' });
   }
 });
