@@ -318,29 +318,10 @@ app.get('/candidatos', async (req, res) => {
   }
 
   try {
-    // Obtener preferencia del usuario
-    const prefResult = await pool.query(
-      'SELECT preferencia_genero FROM usuarios WHERE id = $1',
-      [userId]
-    );
-
-    if (prefResult.rows.length === 0) {
-      return res.status(404).json({ status: 'error', message: 'Usuario no encontrado' });
-    }
-
-    const preferencia = prefResult.rows[0].preferencia_genero;
-
-    // Construir filtro
-    let generoFiltro = '';
-    if (preferencia === 'hombre') generoFiltro = "AND u.genero = 'hombre'";
-    else if (preferencia === 'mujer') generoFiltro = "AND u.genero = 'mujer'";
-    // Si es "ambos", no filtramos por género
-
     const candidatos = await pool.query(`
       SELECT u.id, u.nombre, u.username, u.descripcion
       FROM usuarios u
       WHERE u.id != $1
-        ${generoFiltro}
         AND u.id NOT IN (
           SELECT receptor_id FROM likes WHERE emisor_id = $1
         )
@@ -353,6 +334,7 @@ app.get('/candidatos', async (req, res) => {
     res.status(500).json({ status: 'error', message: 'Error en el servidor' });
   }
 });
+
 app.post('/like', async (req, res) => {
   const { emisor_id, receptor_id, reaccion } = req.body;
 
