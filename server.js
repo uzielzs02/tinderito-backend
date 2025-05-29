@@ -44,8 +44,13 @@ pool.connect((err, client, release) => {
   }
 });
 
-app.use(bodyParser.json());
-
+app.use((req, res, next) => {
+  if (req.is('application/json')) {
+    bodyParser.json()(req, res, next);
+  } else {
+    next();
+  }
+});
 // Middleware de logs
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
