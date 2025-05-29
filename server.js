@@ -566,7 +566,7 @@ app.get('/user/:id', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, nombre, username, email, genero, preferencia_genero 
+      `SELECT id, nombre, username, email, genero, preferencia_genero, descripcion 
        FROM usuarios 
        WHERE id = $1`,
       [userId]
