@@ -127,7 +127,13 @@ app.post('/login', (req, res) => {
 
 // POST /register
 app.post('/register', async (req, res) => {
-  const { nombre, email, username, password } = req.body;
+  const { nombre, email, username, password, genero } = req.body;
+
+  // Validar campos requeridos
+  if (!nombre || !email || !username || !password || !genero) {
+    return res.status(400).json({ status: 'error', message: 'Faltan campos requeridos' });
+  }
+
   const checkQuery = 'SELECT * FROM usuarios WHERE username = $1 OR email = $2';
 
   pool.query(checkQuery, [username, email], async (err, results) => {
@@ -143,23 +149,32 @@ app.post('/register', async (req, res) => {
       }
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const insertQuery = `
-      INSERT INTO usuarios (nombre, email, username, password) 
-      VALUES ($1, $2, $3, $4) 
-      RETURNING id, nombre, username, email
-    `;
+    try {
+      const hashedPassword = await bcrypt.hash(password, 10);
 
-    pool.query(insertQuery, [nombre, email, username, hashedPassword], (err, result) => {
-      if (err) return res.status(500).json({ status: 'error', message: 'Error al registrar el usuario' });
+      const insertQuery = `
+        INSERT INTO usuarios (nombre, email, username, password, genero) 
+        VALUES ($1, $2, $3, $4, $5) 
+        RETURNING id, nombre, username, email, genero
+      `;
 
-      const newUser = result.rows[0];
-      res.json({
-        status: 'success',
-        message: 'Registro exitoso',
-        user: newUser
+      pool.query(insertQuery, [nombre, email, username, hashedPassword, genero], (err, result) => {
+        if (err) {
+          console.error('Error al insertar nuevo usuario:', err);
+          return res.status(500).json({ status: 'error', message: 'Error al registrar el usuario' });
+        }
+
+        const newUser = result.rows[0];
+        res.json({
+          status: 'success',
+          message: 'Registro exitoso',
+          user: newUser
+        });
       });
-    });
+    } catch (error) {
+      console.error('Error en hash o inserción:', error);
+      res.status(500).json({ status: 'error', message: 'Error interno del servidor' });
+    }
   });
 });
 
@@ -318,27 +333,19 @@ app.get('/candidatos', async (req, res) => {
   }
 
   try {
-    // 1. Obtener preferencia del usuario actual
-    const userPrefResult = await pool.query(
-      `SELECT preferencia_genero FROM usuarios WHERE id = $1`,
+    // 1. Obtener género y preferencia del usuario actual
+    const userResult = await pool.query(
+      `SELECT genero, preferencia_genero FROM usuarios WHERE id = $1`,
       [userId]
     );
 
-    if (userPrefResult.rows.length === 0) {
+    if (userResult.rows.length === 0) {
       return res.status(404).json({ status: 'error', message: 'Usuario no encontrado' });
     }
 
-    const preferenciaUsuario = userPrefResult.rows[0].preferencia_genero;
+    const { genero, preferencia_genero } = userResult.rows[0];
 
-    // 2. Generar filtro por compatibilidad de preferencia
-    let generoFiltro = '';
-    if (preferenciaUsuario === 'hombre') {
-      generoFiltro = `AND u.preferencia_genero IN ('mujer', 'ambos')`;
-    } else if (preferenciaUsuario === 'mujer') {
-      generoFiltro = `AND u.preferencia_genero IN ('hombre', 'ambos')`;
-    } // si es 'ambos', no se aplica filtro adicional
-
-    // 3. Consulta final con filtro
+    // 2. Consulta candidatos que coincidan:
     const candidatos = await pool.query(`
       SELECT 
         u.id, 
@@ -353,12 +360,17 @@ app.get('/candidatos', async (req, res) => {
         ORDER BY usuario_id, id ASC
       ) f ON f.usuario_id = u.id
       WHERE u.id != $1
-        ${generoFiltro}
+        AND (
+          $2 = 'ambos' OR u.genero = $2
+        )
+        AND (
+          u.preferencia_genero = 'ambos' OR u.preferencia_genero = $3
+        )
         AND u.id NOT IN (
           SELECT receptor_id FROM likes WHERE emisor_id = $1
         )
       LIMIT 20
-    `, [userId]);
+    `, [userId, preferencia_genero, genero]);
 
     res.json({ status: 'success', candidatos: candidatos.rows });
   } catch (err) {
@@ -450,6 +462,17 @@ app.post('/mensaje', async (req, res) => {
   }
 
   try {
+    // 🔐 Verificar que el usuario esté autorizado a escribir en ese match
+    const validMatch = await pool.query(
+      `SELECT * FROM matches WHERE id = $1 AND ($2 = usuario1_id OR $2 = usuario2_id)`,
+      [match_id, emisor_id]
+    );
+
+    if (validMatch.rows.length === 0) {
+      return res.status(403).json({ status: 'error', message: 'No autorizado para este chat' });
+    }
+
+    // 💬 Insertar mensaje
     const result = await pool.query(`
       INSERT INTO mensajes (match_id, emisor_id, mensaje)
       VALUES ($1, $2, $3)
