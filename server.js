@@ -528,6 +528,8 @@ app.post('/upload_fotos', upload.fields([
   { name: 'foto3', maxCount: 1 }
 ]), async (req, res) => {
   try {
+    console.log("REQ.FILES:", req.files); // 👈 LOG para depuración
+
     const { userId, descripcion, preferencia_genero } = req.body;
 
     if (!userId || !descripcion || !preferencia_genero || !req.files) {
