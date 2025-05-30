@@ -65,24 +65,34 @@ exports.getUsuarioPorId = async (req, res) => {
   }
 };
 
-// PUT /user/:id/perfil_completo
+// PUT /user/:id/perfil_completo (multipart/form-data)
 exports.actualizarPerfilConFotos = async (req, res) => {
   const userId = req.params.id;
-  const { descripcion, preferencia_genero } = req.body;
+  const descripcion = req.body.descripcion;
+  const preferencia_genero = req.body.preferencia_genero;
+
+  // Validar campos texto
+  if (!descripcion || !preferencia_genero) {
+    return res.status(400).json({ status: 'error', message: 'Faltan campos requeridos' });
+  }
+
+  // Validar archivos
+  if (!req.files || req.files.length < 3) {
+    return res.status(400).json({ status: 'error', message: 'Debes subir al menos 3 fotos' });
+  }
 
   try {
-    if (!descripcion || !preferencia_genero || !req.files || req.files.length < 3) {
-      return res.status(400).json({ status: 'error', message: 'Faltan campos o archivos' });
-    }
-
+    // Actualizar usuario
     await pool.query(`
       UPDATE usuarios
       SET descripcion = $1, preferencia_genero = $2
       WHERE id = $3
     `, [descripcion, preferencia_genero, userId]);
 
+    // Borrar fotos anteriores
     await pool.query(`DELETE FROM fotos WHERE usuario_id = $1`, [userId]);
 
+    // Guardar nuevas fotos
     for (const file of req.files) {
       const url = `/uploads/${file.filename}`;
       await pool.query(`INSERT INTO fotos (usuario_id, url) VALUES ($1, $2)`, [userId, url]);
