@@ -77,15 +77,23 @@ exports.like = async (req, res) => {
           WHERE (usuario1_id = $1 AND usuario2_id = $2)
              OR (usuario1_id = $2 AND usuario2_id = $1)
         `, [emisor_id, receptor_id]);
+        let matchId;
 
+        // Si no existía antes, lo insertamos y lo recuperamos
         if (existing.rows.length === 0) {
-          await pool.query(`
+        const inserted = await pool.query(`
             INSERT INTO matches (usuario1_id, usuario2_id)
             VALUES ($1, $2)
-          `, [emisor_id, receptor_id]);
+            RETURNING id
+        `, [emisor_id, receptor_id]);
+        matchId = inserted.rows[0].id;
+        } else {
+        matchId = existing.rows[0].id;
         }
 
-        return res.json({ status: 'success', match: true });
+        // Devolvemos el matchId al cliente
+        return res.json({ status: 'success', match: true, matchId });
+
       }
     }
 
@@ -112,11 +120,20 @@ exports.getMatches = async (req, res) => {
         u.id AS usuario_id,
         u.nombre,
         u.username,
-        u.descripcion
+        u.descripcion,
+        f.url AS foto
       FROM matches m
-      JOIN usuarios u ON (u.id = CASE 
-        WHEN m.usuario1_id = $1 THEN m.usuario2_id 
-        ELSE m.usuario1_id END)
+      JOIN usuarios u ON (
+        u.id = CASE 
+          WHEN m.usuario1_id = $1 THEN m.usuario2_id 
+          ELSE m.usuario1_id 
+        END
+      )
+      LEFT JOIN (
+        SELECT DISTINCT ON (usuario_id) usuario_id, url
+        FROM fotos
+        ORDER BY usuario_id, id ASC
+      ) f ON f.usuario_id = u.id
       WHERE m.usuario1_id = $1 OR m.usuario2_id = $1
     `, [userId]);
 
