@@ -20,14 +20,14 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Obtener datos básicos del usuario por username (usado para verificar perfil completo)
+// Obtener datos básicos del usuario por username
 router.get('/prueba', userController.getUsuarioPorUsername);
 
 // Obtener datos y fotos del usuario por ID
 router.get('/user/:id', userController.getUsuarioPorId);
 
-
-router.put('/api/users/user/:id/perfil_completo', upload.any(), userController.actualizarPerfilConFotos);
+// ✅ ACTUALIZAR PERFIL CON FOTOS (PUT con multipart)
+router.put('/user/:id/perfil_completo', upload.any(), userController.actualizarPerfilConFotos);
 
 // Subir fotos (formato multipart)
 router.post('/upload_fotos', upload.fields([
