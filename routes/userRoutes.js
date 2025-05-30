@@ -26,8 +26,8 @@ router.get('/prueba', userController.getUsuarioPorUsername);
 // Obtener datos y fotos del usuario por ID
 router.get('/user/:id', userController.getUsuarioPorId);
 
-// Completar perfil del usuario (con descripción, preferencia y fotos como array)
-router.put('/user/:id/perfil_completo', userController.actualizarPerfilConFotos);
+
+router.put('/api/users/user/:id/perfil_completo', upload.any(), userController.actualizarPerfilConFotos);
 
 // Subir fotos (formato multipart)
 router.post('/upload_fotos', upload.fields([

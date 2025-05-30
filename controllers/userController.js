@@ -68,13 +68,13 @@ exports.getUsuarioPorId = async (req, res) => {
 // PUT /user/:id/perfil_completo
 exports.actualizarPerfilConFotos = async (req, res) => {
   const userId = req.params.id;
-  const { descripcion, preferencia_genero, fotos } = req.body;
-
-  if (!descripcion || !preferencia_genero || !Array.isArray(fotos) || fotos.length < 3) {
-    return res.status(400).json({ status: 'error', message: 'Faltan datos o fotos' });
-  }
+  const { descripcion, preferencia_genero } = req.body;
 
   try {
+    if (!descripcion || !preferencia_genero || !req.files || req.files.length < 3) {
+      return res.status(400).json({ status: 'error', message: 'Faltan campos o archivos' });
+    }
+
     await pool.query(`
       UPDATE usuarios
       SET descripcion = $1, preferencia_genero = $2
@@ -83,14 +83,12 @@ exports.actualizarPerfilConFotos = async (req, res) => {
 
     await pool.query(`DELETE FROM fotos WHERE usuario_id = $1`, [userId]);
 
-    for (const url of fotos) {
-      await pool.query(`
-        INSERT INTO fotos (usuario_id, url)
-        VALUES ($1, $2)
-      `, [userId, url]);
+    for (const file of req.files) {
+      const url = `/uploads/${file.filename}`;
+      await pool.query(`INSERT INTO fotos (usuario_id, url) VALUES ($1, $2)`, [userId, url]);
     }
 
-    res.json({ status: 'success', message: 'Perfil completado con fotos' });
+    res.json({ status: 'success', message: 'Perfil actualizado' });
 
   } catch (err) {
     console.error('Error al actualizar perfil con fotos:', err);
